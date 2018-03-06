@@ -1,0 +1,10 @@
+applications:
+- buildpack: sdk-for-nodejs
+  host: AppIDb1-node-52c96e56-c0ab-4008-9c62-2e04bef048a9
+  name: AppIDb1-node-52c96e56-c0ab-4008-9c62-2e04bef048a9
+  instances: 1
+  memory: 256M
+  disk_quota: 1024M
+  timeout: 180
+  services:
+  - App ID-b1
