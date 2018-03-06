@@ -20,6 +20,7 @@ const app = express();
 const helmet = require("helmet");
 const express_enforces_ssl = require("express-enforces-ssl");
 const cfEnv = require("cfenv");
+var bodyParser = require('body-parser');
 
 const GUEST_USER_HINT = "A guest user started using the app. App ID created a new anonymous profile, where the user’s selections can be stored.";
 const RETURNING_USER_HINT = "An identified user returned to the app with the same identity. The app accesses his identified profile and the previous selections that he made.";
@@ -175,6 +176,12 @@ app.get("/anon_login", passport.authenticate(WebAppStrategy.STRATEGY_NAME, {allo
 // Protected area. If current user is not authenticated - redirect to the login widget will be returned.
 // In case user is authenticated - a page with current user information will be returned.
 app.get("/login", passport.authenticate(WebAppStrategy.STRATEGY_NAME, {successRedirect : '/protected', forceLogin: true}));
+
+app.post("/form/submit", bodyParser.urlencoded({extended: false}), passport.authenticate(WebAppStrategy.STRATEGY_NAME, {
+    successRedirect: '/protected',
+    failureRedirect: '/login',
+    failureFlash : true // allow flash messages
+}));
 
 
 app.get("/token", function(req, res){

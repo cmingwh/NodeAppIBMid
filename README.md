@@ -1,4 +1,7 @@
 # AppID sample Web application
+
+Note, extra information can be found on [Branding Docs](https://console.bluemix.net/docs/services/appid/branded.html#branding)
+
 1. Before you begin, make sure that Cloud Foundry CLI is installed.
    <br />For more information visit: http://docs.cloudfoundry.org/cf-cli/install-go-cli.html.
 
