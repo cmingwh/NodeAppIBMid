@@ -5,12 +5,57 @@
     <link rel='stylesheet' href='stylesheets/index.css'/>
 </head>
 <body>
+<script>
+    window.fbAsyncInit = function() {
+        FB.init({
+            appId      : '1216889568444120',
+            xfbml      : true,
+            version    : 'v2.12',
+            status     : true
+        });
+        FB.AppEvents.logPageView();
+    };
+
+    function checkLogin() {
+        FB.getLoginStatus(function(response) {
+            console.log(status);
+        });
+    }
+
+    function login() {
+        FB.login(function(response) {
+            if (response.status === 'connected') {
+                console.log("user is connected")
+            } else {
+                console.log("The person is not logged into this app or we are unable to tell.");
+            }
+
+            // handle the response
+            console.log("Response goes here!");
+
+        }, {scope: 'email, public_profile'});
+    }
+
+    function logout() {
+        FB.logout(function(response) {
+            // user is now logged out
+        });
+    }
+
+    (function(d, s, id){
+        var js, fjs = d.getElementsByTagName(s)[0];
+        if (d.getElementById(id)) {return;}
+        js = d.createElement(s); js.id = id;
+        js.src = "https://connect.facebook.net/en_US/sdk.js";
+        fjs.parentNode.insertBefore(js, fjs);
+    }(document, 'script', 'facebook-jssdk'));
+</script>
 <div id="fb-root"></div>
 <script>(function(d, s, id) {
     var js, fjs = d.getElementsByTagName(s)[0];
     if (d.getElementById(id)) return;
     js = d.createElement(s); js.id = id;
-    js.src = 'https://connect.facebook.net/en_US/sdk.js#xfbml=1&version=v2.12&appId=2086568504894712&autoLogAppEvents=1';
+    js.src = 'https://connect.facebook.net/en_US/sdk.js#xfbml=1&version=v2.12&appId=1216889568444120&autoLogAppEvents=1';
     fjs.parentNode.insertBefore(js, fjs);
 }(document, 'script', 'facebook-jssdk'));</script>
 
@@ -30,8 +75,17 @@
         </div>
 
         <div class="flex-top">
-            <div class="fb-login-button" data-max-rows="1" data-size="large" data-button-type="continue_with" data-show-faces="false" data-auto-logout-link="false" data-use-continue-as="false"></div>
+            <button onclick="javascript:login();">Login with Facebook</button>
         </div>
+
+        <div class="flex-top">
+            <button onclick="javascript:logout();">Logout from Facebook</button>
+        </div>
+
+        <div class="flex-top">
+            <button onclick="javascript:checkLogin();">Check Facebook's status</button>
+        </div>
+
 
         <div id="login-button-div" class="flex-top">
             <a href="/login">
@@ -57,6 +111,12 @@
                 user is asked to login
             </div>
         </div>
+    </div>
+    <div
+            class="fb-like"
+            data-share="true"
+            data-width="450"
+            data-show-faces="true">
     </div>
 </div>
 </body>
