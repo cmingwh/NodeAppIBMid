@@ -14,13 +14,19 @@
 const express = require("express");
 const session = require("express-session");
 const passport = require("passport");
-const WebAppStrategy = require("bluemix-appid").WebAppStrategy;
-const userAttributeManager = require("bluemix-appid").UserAttributeManager;
-const app = express();
+const nconf = require("nconf");
+const appID = require("bluemix-appid");
+
 const helmet = require("helmet");
 const express_enforces_ssl = require("express-enforces-ssl");
 const cfEnv = require("cfenv");
-var bodyParser = require('body-parser');
+const cookieParser = require("cookie-parser");
+
+const WebAppStrategy = appID.WebAppStrategy;
+const userAttributeManager = appID.UserAttributeManager;
+const UnauthorizedException = appID.UnauthorizedException;
+
+const app = express();
 
 const GUEST_USER_HINT = "A guest user started using the app. App ID created a new anonymous profile, where the user’s selections can be stored.";
 const RETURNING_USER_HINT = "An identified user returned to the app with the same identity. The app accesses his identified profile and the previous selections that he made.";
@@ -29,16 +35,12 @@ const NEW_USER_HINT = "An identified user logged in for the first time. Now when
 const LOGIN_URL = "/ibm/bluemix/appid/login";
 const CALLBACK_URL = "/ibm/bluemix/appid/callback";
 
-if (cfEnv.getAppEnv().isLocal) {
-   console.error('This sample should not work locally, please push the sample to Bluemix.');
-   process.exit(1);
-}
+const port = process.env.PORT || 3000;
 
-// Security configuration
-app.use(helmet());
-app.use(helmet.noCache());
-app.enable("trust proxy");
-app.use(express_enforces_ssl());
+const isLocal = cfEnv.getAppEnv().isLocal;
+
+const config = getLocalConfig();
+configureSecurity();
 
 // Setup express application to use express-session middleware
 // Must be configured with proper session storage for production
@@ -51,23 +53,22 @@ app.use(session({
 	proxy: true,
 	cookie: {
 		httpOnly: true,
-		secure: true
+		secure: !isLocal
 	}
 }));
 
 app.set('view engine', 'ejs');
 
-// Use static resources from /samples directory
-app.use(express.static("views"));
-
 // Configure express application to use passportjs
 app.use(passport.initialize());
 app.use(passport.session());
 
-passport.use(new WebAppStrategy());
+let webAppStrategy = new WebAppStrategy(config);
+passport.use(webAppStrategy);
 
 // Initialize the user attribute Manager
-userAttributeManager.init();
+userAttributeManager.init(config);
+
 
 
 // Configure passportjs with user serialization/deserialization. This is required
@@ -94,80 +95,57 @@ app.get(LOGIN_URL, passport.authenticate(WebAppStrategy.STRATEGY_NAME, {
 // 3. application root ("/")
 app.get(CALLBACK_URL, passport.authenticate(WebAppStrategy.STRATEGY_NAME, {allowAnonymousLogin: true}));
 
+function storeRefreshTokenInCookie(req, res, next) {
+	if (req.session[WebAppStrategy.AUTH_CONTEXT] && req.session[WebAppStrategy.AUTH_CONTEXT].refreshToken) {
+		const refreshToken = req.session[WebAppStrategy.AUTH_CONTEXT].refreshToken;
+		/* An example of storing user's refresh-token in a cookie with expiration of a month */
+		res.cookie('refreshToken', refreshToken, {maxAge: 1000 * 60 * 60 * 24 * 30 /* 30 days */});
+	}
+	next();
+}
 
-//Generate the main html page
-app.get('/',function(req,res){
-	res.sendfile(__dirname + '/views/index.html');
-});
+function isLoggedIn(req) {
+	return req.session[WebAppStrategy.AUTH_CONTEXT];
+}
 
 // Protected area. If current user is not authenticated - redirect to the login widget will be returned.
 // In case user is authenticated - a page with current user information will be returned.
-app.get("/protected", passport.authenticate(WebAppStrategy.STRATEGY_NAME), function(req, res){
-    var accessToken = req.session[WebAppStrategy.AUTH_CONTEXT].accessToken;
-    var toggledItem = req.query.foodItem;
-    var isGuest = req.user.amr[0] === "appid_anon";
+app.get("/protected", function tryToRefreshTokensIfNotLoggedIn(req, res, next) {
+	if (isLoggedIn(req)) {
+		return next();
+	}
 
-
-    // get the attributes for the current user:
-    userAttributeManager.getAllAttributes(accessToken).then(function (attributes) {
-        var foodSelection = attributes.foodSelection ? JSON.parse(attributes.foodSelection) : [];
-        var firstLogin = !isGuest && !attributes.points;
-        if (toggledItem) {
-            var selectedItemIndex = foodSelection.indexOf(toggledItem);
-            if (selectedItemIndex >= 0) {
-                foodSelection.splice(selectedItemIndex, 1);
-            } else {
-                foodSelection.push(toggledItem);
-            }
-
-            // update the user's selection
-            userAttributeManager.setAttribute(accessToken, "foodSelection", JSON.stringify(foodSelection))
-                .then(function (attributes) {
-                    givePointsAndRenderPage(req, res, foodSelection, isGuest, firstLogin);
-                });
-
-        } else {
-            givePointsAndRenderPage(req, res, foodSelection, isGuest, firstLogin);
-        }
-    });
-
-
+	webAppStrategy.refreshTokens(req, req.cookies.refreshToken).finally(function() {
+		next();
 	});
+}, passport.authenticate(WebAppStrategy.STRATEGY_NAME), storeRefreshTokenInCookie, function (req, res, next) {
+	var accessToken = req.session[WebAppStrategy.AUTH_CONTEXT].accessToken;
+	var isGuest = req.user.amr[0] === "appid_anon";
+	var foodSelection;
+	var firstLogin;
 
-function givePointsAndRenderPage(req, res, foodSelection, isGuest, firstLogin) {
-    //return the protected page with user info
-
-    var hintText;
-    if (isGuest) {
-        hintText = GUEST_USER_HINT;
-    } else {
-        if (firstLogin) {
-            hintText = NEW_USER_HINT;
-        } else {
-            hintText = RETURNING_USER_HINT;
-        }
-    }
-    var email = req.user.email;
-    if(req.user.email !== undefined && req.user.email.indexOf('@') != -1)
-           email = req.user.email.substr(0,req.user.email.indexOf('@'));
-    var renderOptions = {
-        name: req.user.name || email || "Guest",
-        picture: req.user.picture || "/images/anonymous.svg",
-        foodSelection: JSON.stringify(foodSelection),
-        topHintText: isGuest ? "Login to get a gift >" : "You got 150 points go get a pizza",
-        topImageVisible : isGuest ? "hidden" : "visible",
-        topHintClickAction : isGuest ? ' window.location.href = "/login";' : ";",
-        hintText : hintText
-    };
-
-    if (firstLogin) {
-        userAttributeManager.setAttribute(req.session[WebAppStrategy.AUTH_CONTEXT].accessToken, "points", "150").then(function (attributes) {
-            res.render('protected', renderOptions);
-         });
-    } else {
-        res.render('protected', renderOptions);
-    }
-}
+	// get the attributes for the current user:
+	userAttributeManager.getAllAttributes(accessToken).then(function (attributes) {
+		var toggledItem = req.query.foodItem;
+		foodSelection = attributes.foodSelection ? JSON.parse(attributes.foodSelection) : [];
+		firstLogin = !isGuest && !attributes.points;
+		if (!toggledItem) {
+			return;
+		}
+		var selectedItemIndex = foodSelection.indexOf(toggledItem);
+		if (selectedItemIndex >= 0) {
+			foodSelection.splice(selectedItemIndex, 1);
+		} else {
+			foodSelection.push(toggledItem);
+		}
+		// update the user's selection
+		return userAttributeManager.setAttribute(accessToken, "foodSelection", JSON.stringify(foodSelection));
+	}).then(function () {
+		givePointsAndRenderPage(req, res, foodSelection, isGuest, firstLogin);
+	}).catch(function (e) {
+		next(e);
+	});
+});
 
 // Protected area. If current user is not authenticated - an anonymous login process will trigger.
 // In case user is authenticated - a page with current user information will be returned.
@@ -177,20 +155,108 @@ app.get("/anon_login", passport.authenticate(WebAppStrategy.STRATEGY_NAME, {allo
 // In case user is authenticated - a page with current user information will be returned.
 app.get("/login", passport.authenticate(WebAppStrategy.STRATEGY_NAME, {successRedirect : '/protected', forceLogin: true}));
 
-app.post("/form/submit", bodyParser.urlencoded({extended: false}), passport.authenticate(WebAppStrategy.STRATEGY_NAME, {
-    successRedirect: '/protected',
-    failureRedirect: '/login',
-    failureFlash : true // allow flash messages
-}));
+app.get("/logout", function(req, res, next) {
+	WebAppStrategy.logout(req);
+	// If you chose to store your refresh-token, don't forgot to clear it also in logout:
+	res.clearCookie("refreshToken");
+	res.redirect("/");
+});
 
 
 app.get("/token", function(req, res){
-
 	//return the token data
 	res.render('token',{tokens: JSON.stringify(req.session[WebAppStrategy.AUTH_CONTEXT])});
 });
 
-var port = process.env.PORT || 3000;
+app.use(express.static("public", {index: null}));
+
+app.use('/', function(req, res, next) {
+	if (!isLoggedIn(req)) {
+		webAppStrategy.refreshTokens(req, req.cookies.refreshToken).then(function() {
+			res.redirect('/protected');
+		}).catch(function() {
+			next();
+		})
+	} else {
+		res.redirect('/protected');
+	}
+}, function(req,res,next) {
+	res.sendFile(__dirname + '/public/index.html');
+});
+
+app.use(function(err, req, res, next) {
+	if (err instanceof UnauthorizedException) {
+		WebAppStrategy.logout(req);
+		res.redirect('/');
+	} else {
+		next(err);
+	}
+});
+
 app.listen(port, function(){
   console.log("Listening on http://localhost:" + port);
 });
+
+function givePointsAndRenderPage(req, res, foodSelection, isGuest, firstLogin) {
+	//return the protected page with user info
+	var hintText;
+	if (isGuest) {
+		hintText = GUEST_USER_HINT;
+	} else {
+		if (firstLogin) {
+			hintText = NEW_USER_HINT;
+		} else {
+			hintText = RETURNING_USER_HINT;
+		}
+	}
+	var email = req.user.email;
+	if(req.user.email !== undefined && req.user.email.indexOf('@') != -1)
+		email = req.user.email.substr(0,req.user.email.indexOf('@'));
+	var renderOptions = {
+		name: req.user.name || email || "Guest",
+		picture: req.user.picture || "/images/anonymous.svg",
+		foodSelection: JSON.stringify(foodSelection),
+		topHintText: isGuest ? "Login to get a gift >" : "You got 150 points go get a pizza",
+		topImageVisible : isGuest ? "hidden" : "visible",
+		topHintClickAction : isGuest ? ' window.location.href = "/login";' : ";",
+		hintText : hintText,
+		isGuest: isGuest
+	};
+
+	if (firstLogin) {
+		userAttributeManager.setAttribute(req.session[WebAppStrategy.AUTH_CONTEXT].accessToken, "points", "150").then(function (attributes) {
+			res.render('protected', renderOptions);
+		});
+	} else {
+		res.render('protected', renderOptions);
+	}
+}
+
+function getLocalConfig() {
+	if (!isLocal) {
+		return {};
+	}
+	let config = {};
+	const localConfig = nconf.env().file(`${__dirname}/config.json`).get();
+	const requiredParams = ['clientId', 'secret', 'tenantId', 'oauthServerUrl', 'profilesUrl'];
+	requiredParams.forEach(function (requiredParam) {
+		if (!localConfig[requiredParam]) {
+			console.error('When running locally, make sure to create a file *config.json* in the root directory. See config.template.json for an example of a configuration file.');
+			console.error(`Required parameter is missing: ${requiredParam}`);
+			process.exit(1);
+		}
+		config[requiredParam] = localConfig[requiredParam];
+	});
+	config['redirectUri'] = `http://localhost:${port}${CALLBACK_URL}`;
+	return config;
+}
+
+function configureSecurity() {
+	app.use(helmet());
+	app.use(cookieParser());
+	app.use(helmet.noCache());
+	app.enable("trust proxy");
+	if (!isLocal) {
+		app.use(express_enforces_ssl());
+	}
+}

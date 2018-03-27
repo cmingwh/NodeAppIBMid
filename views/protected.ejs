@@ -25,13 +25,18 @@
                 </a>
             </div>
             <div class="flex-top">
-
-                <!--
-                <button class="button" onclick="location.href='token.html'">View Token</button>
-                -->
                 <a href="/token">
                     <button class="button">View Token</button>
                 </a>
+                <% if (isGuest) { %>
+                <a href="/login">
+                    <button class="button">Sign in</button>
+                </a>
+                <% } else { %>
+                <a href="/logout">
+                    <button class="button">Sign out</button>
+                </a>
+                <% } %>
             </div>
         </div>
     </div>
